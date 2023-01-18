@@ -51,7 +51,7 @@ settings_keys = {
     "ignore_list": list,
     "verify_excempt_list": list
 }
-str().lower().replace("true","True").replace("false","False")
+
 try:
     with open("config.json") as json_data_file:
         config_file = json.load(json_data_file)
