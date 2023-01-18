@@ -27,6 +27,7 @@ rate_limit = 90
 rate_limit_interval = 60
 TrustScoreInterval = 1800
 display_info_interval = 3600
+masterNodeRegEx = r"^(https:\/\/(?:mainnet-fullnode\d*|testnet-fullnode\d*).coti.io)$"
 
 required_settings = [
     "db_name",
@@ -81,6 +82,14 @@ rate_limits = {}
 cached_NodeDisplayInfo = {
     'timestamp': 0,
     'data': None
+}
+masterNodes = {
+    COTI.MAINNET: [],
+    COTI.TESTNET: []
+}
+TrustScoreNodeURLs = {
+    COTI.MAINNET: None,
+    COTI.TESTNET: None
 }
 httpCodeDesc = http.client.responses
 
@@ -159,7 +168,7 @@ async def rateLimitCheck(URL, concurrent: int = None):
         rate_limits[URL]['first_api_call_timestamp'] = datetime.timestamp(datetime.now())
     elif rate_limits[URL]['api_call_count'] >= rate_limit:
         logger.info(f"{bcolors.WARNING}[Rate-Limiter] ({URL}) Rate limit of {rate_limit} p/m has been reached, waiting...{bcolors.ENDC}")
-        #wait until a minute has passed since rate limit has been reached
+        #wait until rate_limit_interval has passed since rate limit has been reached
         while datetime.timestamp(datetime.now()) < (rate_limits[URL]['first_api_call_timestamp'] + rate_limit_interval):
             await asyncio.sleep(0)
         #reset counters
@@ -202,7 +211,7 @@ async def getNodeDisplayInfo(nodeHash):
 
     try:
         if time.time() <= (cached_NodeDisplayInfo['timestamp'] + display_info_interval) and cached_NodeDisplayInfo['timestamp'] != 0:
-            #logger.info(f"{bcolors.WARNING}({nodeHash}) Using cached NodeDisplayData...{bcolors.ENDC}")
+            logger.debug(f"{bcolors.WARNING}({nodeHash}) Using cached NodeDisplayData...{bcolors.ENDC}")
             json_response = cached_NodeDisplayInfo['data']
         else:
             logger.info(f"{bcolors.WARNING}({nodeHash}) Renewing NodeDisplayData...{bcolors.ENDC}")
@@ -240,9 +249,6 @@ async def getNodeDisplayInfo(nodeHash):
         return None, None
 
 def checkSSL(URL: str):
-#def checkSSL(data):
-    #nodeHash = data._nodeHash
-    #URL = data.url
     try:
         socket.setdefaulttimeout(5)
         domain = urllib.parse.urlparse(URL).netloc
@@ -252,25 +258,17 @@ def checkSSL(URL: str):
         timestamp = bytes.decode('utf-8')
         unix = time.mktime(datetime.strptime(timestamp, '%Y%m%d%H%M%S%z').timetuple())
         return unix
-        #return nodeHash, URL, unix
     except ssl.SSLCertVerificationError as e:
         logger.warning(f"{bcolors.FAIL}SSL Error{bcolors.ENDC} - {e} ({URL})")
         return f"SSL Error - {e}"
-        #return nodeHash, URL, f"SSL Error - {e}"
     except Exception as e:
         logger.warning(f"{bcolors.FAIL}{e}{bcolors.ENDC} ({URL})")
         return f"{e}"
-        #return nodeHash, URL, f"{e}"
 
-masterNodes = {
-    COTI.MAINNET: [],
-    COTI.TESTNET: []
-}
-masterNodeRegEx = r"^(https:\/\/(?:mainnet-fullnode\d*|testnet-fullnode\d*).coti.io)$"
 
 async def checkNodeStatus(urls, network):
     try:
-        #logger.info(f"{bcolors.OKCYAN}Current Master-Nodes -> {masterNodes[network]}{bcolors.ENDC}")
+        logger.debug(f"{bcolors.OKCYAN}Current Master-Nodes -> {masterNodes[network]}{bcolors.ENDC}")
         for masterNodeUrl in masterNodes[network]:
             if not masterNodeUrl:
                 masterNodeStatus = None
@@ -304,7 +302,7 @@ async def checkNodeStatus(urls, network):
             except Exception as e:
                 logger.error(f'{bcolors.FAIL}[Master-Node]{bcolors.ENDC} ({masterNodeUrl}) An error occurred: {e}')
                 continue
-        #logger.info(f"{bcolors.OKCYAN}Using ({masterNodeUrl}) as Master-Node{bcolors.ENDC}")
+        logger.debug(f"{bcolors.OKCYAN}Using ({masterNodeUrl}) as Master-Node{bcolors.ENDC}")
 
         #check if we got any online masternode
         if not (masterNodeStatus == 200):
@@ -319,7 +317,7 @@ async def checkNodeStatus(urls, network):
         for nodeHash, URL in urls.items():
             if URL in ignore_list:
                 logger.info(f"{bcolors.OKBLUE}URL [{URL}] IGNORING...{bcolors.ENDC}")
-                yield nodeHash, None #Skip checkNodeStatus() but update the rest of the data
+                yield nodeHash, None #if in ignore list, Skip checkNodeStatus() but update the rest of the data async
                 continue
             loop = asyncio.get_event_loop()
             thread = loop.run_in_executor(None, checkSSL, URL)
@@ -334,7 +332,6 @@ async def checkNodeStatus(urls, network):
             SSLResult = await thread
             url = checkSSL_data[thread]['url']
             nodeHash = checkSSL_data[thread]['nodeHash']
-            #print(f"----------------------------- {nodeHash} --- {url} ----- {SSLResult}")
             try:
                 if type(SSLResult) == type(str()):
                     SSLExpDate = None
@@ -371,7 +368,6 @@ async def checkNodeStatus(urls, network):
             SSLExpDate = data.SSLExpDate
             indexGap = 5
             try:
-                #req = session.get(url + "/transaction/index")
                 if verify:
                     req = session.get(url, ssl = True)
                 else:
@@ -387,7 +383,7 @@ async def checkNodeStatus(urls, network):
                             nodeIndex = int(node_json_response['index'])
                             if nodeIndex:
                                 if nodeIndex >= (index - indexGap):
-                                    return nodeHash, (httpCode, http_msg, SyncStatus.Sync, SSLExpDate)#f"{httpCode} {httpCodeDesc[httpCode]}"
+                                    return nodeHash, (httpCode, http_msg, SyncStatus.Sync, SSLExpDate)
                                 else:
                                     return nodeHash, (httpCode, http_msg,  SyncStatus.Unsync, SSLExpDate)
                             else:
@@ -424,24 +420,17 @@ async def checkNodeStatus(urls, network):
                     nodeHash = syncCheckNode['nodeHash']
                     SSLExpDate = syncCheckNode['SSLExpDate']
                     http_msg = syncCheckNode['http_msg']
-                #task = asyncio.ensure_future(proccess_req(session, url, data))
                 task = asyncio.create_task(proccess_req(session, url, data, verify=ssl_verification))
                 tasks.append(task)
                 del data, task
             
-            #for proccesed_req in await asyncio.gather(*tasks):
             for proccesed_req in asyncio.as_completed(tasks): #async
                 yield await proccesed_req
 
     except Exception as e:
         logger.error(f"{bcolors.FAIL}{e}{bcolors.ENDC} in Line {e.__traceback__.tb_lineno}")
 
-trustScore_cache = {}
-
 async def getTrustScore(url, rdata):
-
-    #await rateLimitCheck(url)
-
     userHash = rdata.nodeHash
 
     async with aiohttp.ClientSession() as session:
@@ -476,19 +465,13 @@ async def getTrustScore(url, rdata):
     rdata.trustScore = 0.0
     return rdata
 
-TrustScoreNodeURLs = {
-    COTI.MAINNET: None,
-    COTI.TESTNET: None
-}
 
 async def updateTrustScores():
     logger.info(f"{bcolors.HEADER}{bcolors.UNDERLINE}TrustScores Routine Started...{bcolors.ENDC}")
-    logger.debug(TrustScoreNodeURLs)
     while True:
         for network in TrustScoreNodeURLs:
             while not TrustScoreNodeURLs[network]:
                 await asyncio.sleep(0)
-                #pass
             URL = TrustScoreNodeURLs[network]
             logger.debug(f"Current [{network}] -> {URL}")
             logger.info(f"{bcolors.OKCYAN}[{network}] Updating TrustScores...{bcolors.ENDC}")
@@ -521,8 +504,6 @@ async def updateTrustScores():
                 data = await data
                 trustScore = data.trustScore
                 nodeHash = data.nodeHash
-                #logger.debug(f"trustScore {trustScore} -> {nodeHash}")
-                #trustScore = await getTrustScore(URL, db_nodeHash)
                 if not trustScore: trustScore = db_nodes[nodeHash]['trustScore']
                 db.update_node_trustScore(nodeHash, trustScore)
             logger.info(f"{bcolors.OKCYAN}[{network}] TrustScores Updated!{bcolors.ENDC}")
@@ -770,8 +751,6 @@ async def cacheNodes():
                         except Exception as e:
                             logger.error(f"{bcolors.FAIL}{e}{bcolors.ENDC}",f" on line {e.__traceback__.tb_lineno}")
                 logger.info(f"{bcolors.OKCYAN}[{network}] Stats Updated!{bcolors.ENDC}")
-
-            #pprint(rate_limits)
 
             last_updated = datetime.now(tz=pytz.UTC).strftime("%d-%m-%y, %H:%M")
             logger.info(f"{bcolors.OKGREEN}Last Updated: {last_updated} | Time Elapsed: {((time.time() - start_time) / 60)} minutes.{bcolors.ENDC}")
