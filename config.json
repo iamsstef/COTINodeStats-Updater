@@ -1,0 +1,24 @@
+{
+    "debug": false,
+    "geo_enabled": false,
+    "force_geo": false,
+    "run_once": false,
+
+    "db_name": "coti_nodes",
+    "db_user": "YOUR_DB_USERNAME",
+    "db_pass": "YOUR_DB_PASSWORD",
+    "db_host": "localhost",
+    "ipinfo_token": "IPINFO_TOKEN",
+
+    "rate_limit": 90,
+    "rate_limit_interval": 60,
+    "TrustScoreInterval": 1800,
+
+    "ignore_list": [
+        "https://huobicotinode.io",
+        "https://node2.huobicotinode.io"
+    ],
+
+    "verify_excempt_list": [
+    ]
+}
