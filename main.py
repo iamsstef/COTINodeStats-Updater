@@ -177,7 +177,7 @@ async def rateLimitCheck(URL, concurrent: int = None):
             rate_limits[URL]['api_call_count'] = 0
             rate_limits[URL]['first_api_call_timestamp'] = datetime.timestamp(datetime.now())
     elif rate_limits[URL]['api_call_count'] < rate_limit and datetime.timestamp(datetime.now()) > (rate_limits[URL]['first_api_call_timestamp'] + 61):
-            #reset if a minute has passed before hitting rate limits
+            #reset counters if rate_limit_interval has passed before hitting rate limits
             rate_limits[URL]['api_call_count'] = 0
             rate_limits[URL]['first_api_call_timestamp'] = datetime.timestamp(datetime.now())
 
