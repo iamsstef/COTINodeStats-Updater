@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 # pylint: disable=C0116,W0613
 # coding=utf8
+import sys
 
-import asyncio
-import logging, time, pytz, os, sys, json, re
-import aiohttp, ipinfo
-import ssl, OpenSSL, socket
-from pprint import pprint
-
-from datetime import datetime, timedelta
+try:
+    import asyncio
+    import logging, time, pytz, os, json, re
+    import aiohttp, ipinfo
+    import ssl, OpenSSL, socket
+    import urllib.parse, http.client
+    from datetime import datetime, timedelta
+except ImportError as e:
+    package_name = e.name
+    print(f"Please install required package {package_name} using -> {sys.executable} -m pip install {package_name}")
+    sys.exit()
 
 from custom_data_types import *
 COTI = COTI()
@@ -77,6 +82,7 @@ cached_NodeDisplayInfo = {
     'timestamp': 0,
     'data': None
 }
+httpCodeDesc = http.client.responses
 
 # Enable logging
 logFormater = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -232,10 +238,6 @@ async def getNodeDisplayInfo(nodeHash):
     except Exception as e:
         logger.error(f"{bcolors.FAIL}{e}{bcolors.ENDC}")
         return None, None
-
-
-import urllib.parse, http.client
-httpCodeDesc = http.client.responses
 
 def checkSSL(URL: str):
 #def checkSSL(data):

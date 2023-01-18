@@ -1,5 +1,11 @@
-import mariadb, sys, traceback, json, logging
-from datetime import datetime
+import sys
+try:
+    import mariadb, json
+    from datetime import datetime
+except ImportError as e:
+    package_name = e.name
+    print(f"Please install required package {package_name} using -> {sys.executable} -m pip install {package_name}")
+    sys.exit()
 
 class DBHelper:
     def __init__(self, username, password, dbname, host):
@@ -206,9 +212,3 @@ class DBHelper:
                     }
             return None
             
-        def get_item_count(self, chat_type):
-            stmt = "SELECT * FROM joined_chats WHERE chat_type = (?)"
-            args = (chat_type, )
-            count = [x for x in self.conn.execute(stmt, args)]
-            count = len(count)
-            return count
