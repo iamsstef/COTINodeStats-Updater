@@ -10,6 +10,7 @@
     "db_host": "localhost",
     "ipinfo_token": "IPINFO_TOKEN",
 
+    "indexGap": 10,
     "rate_limit": 90,
     "rate_limit_interval": 60,
     "TrustScoreInterval": 1800,
