@@ -18,11 +18,12 @@ except ImportError as e:
 from custom_data_types import *
 COTI = COTI()
 
-from dbhelper import DBHelper
+from async_dbhelper import DBHelper
 
 debug = geo_enabled = force_geo = run_once = False
 db_name = db_user = db_pass = db_host = ipinfo_token = ""
 ignore_list = verify_excempt_list = []
+indexGap = 5
 rate_limit = 90
 rate_limit_interval = 60
 TrustScoreInterval = 1800
@@ -45,6 +46,7 @@ settings_keys = {
     "db_pass": str,
     "db_host": str,
     "ipinfo_token": str,
+    "indexGap": int,
     "rate_limit": int,
     "rate_limit_interval": int,
     "TrustScoreInterval": int,
@@ -111,12 +113,6 @@ logger.addHandler(logSH)
 logger.addHandler(logFH)
 
 logger.info(f"{bcolors.OKCYAN}Logger started{bcolors.ENDC}")
-
-DBHelper = DBHelper(db_user,db_pass, dbname = db_name, host = db_host)
-DBHelper.setup()
-
-mainnet_db = DBHelper.coti_node(COTI.MAINNET)
-testnet_db = DBHelper.coti_node(COTI.TESTNET)
 
 def requestsExceptionDesc(e):
     try:
@@ -366,7 +362,7 @@ async def checkNodeStatus(urls, network):
         async def proccess_req(session: aiohttp.ClientSession, url, data, verify = True):
             nodeHash = data.nodeHash
             SSLExpDate = data.SSLExpDate
-            indexGap = 5
+
             try:
                 if verify:
                     req = session.get(url, ssl = True)
@@ -424,7 +420,7 @@ async def checkNodeStatus(urls, network):
                 tasks.append(task)
                 del data, task
             
-            for proccesed_req in asyncio.as_completed(tasks): #async
+            async for proccesed_req in as_completed_async(tasks): #async
                 yield await proccesed_req
 
     except Exception as e:
@@ -476,7 +472,7 @@ async def updateTrustScores():
             logger.debug(f"Current [{network}] -> {URL}")
             logger.info(f"{bcolors.OKCYAN}[{network}] Updating TrustScores...{bcolors.ENDC}")
             db = mainnet_db if network == COTI.MAINNET else testnet_db
-            db_nodes = db.get_nodes()
+            db_nodes = await db.get_nodes()
             nodeHashes = list((x for x in db_nodes))
             
             lastIndex = 0
@@ -500,12 +496,12 @@ async def updateTrustScores():
                 remaining = len(nodeHashes) - position
                 logger.debug(f"lastIndex {lastIndex} | len(nodeHashes) {len(nodeHashes)} | position {position}")
 
-            for data in asyncio.as_completed(tasks):
+            async for data in as_completed_async(tasks):
                 data = await data
                 trustScore = data.trustScore
                 nodeHash = data.nodeHash
                 if not trustScore: trustScore = db_nodes[nodeHash]['trustScore']
-                db.update_node_trustScore(nodeHash, trustScore)
+                await db.update_node_trustScore(nodeHash, trustScore)
             logger.info(f"{bcolors.OKCYAN}[{network}] TrustScores Updated!{bcolors.ENDC}")
         await asyncio.sleep(TrustScoreInterval)
 
@@ -534,7 +530,7 @@ async def cacheNodes():
 
                 status = jsonResponse['status']
 
-                db_nodes = db.get_nodes()
+                db_nodes = await db.get_nodes()
 
                 if status.lower() == "success":
                     multipleNodeMaps = jsonResponse['networkData']['multipleNodeMaps']
@@ -580,7 +576,7 @@ async def cacheNodes():
                                     }
 
                                     last_updated = int(time.time())
-                                    db.update_node(
+                                    await db.update_node(
                                         db_node, db_node_data["ip"], geo_data, db_node_data["url"], db_node_data["version"],
                                         json.dumps(db_node_data['feeData']), db_node_data["creationTime"],
                                         sync, http_code, http_msg, ssl_exp, 0, db_node_data['last_seen'], json.dumps(displayInfo),last_updated
@@ -617,7 +613,7 @@ async def cacheNodes():
                                 }
 
                                 last_updated = int(time.time())
-                                db.update_node(
+                                await db.update_node(
                                     db_node, db_node_data["ip"], geo_data, db_node_data["url"], db_node_data["version"],
                                     json.dumps(db_node_data['feeData']), db_node_data["creationTime"],
                                     sync, http_code, http_msg, ssl_exp, 0, db_node_data['last_seen'], json.dumps(displayInfo),last_updated
@@ -662,7 +658,7 @@ async def cacheNodes():
                                 trustScore = 0.0
 
                                 last_updated = int(time.time())
-                                db.add_node(
+                                await db.add_node(
                                     nodeHash, node["address"], geo_data, node["webServerUrl"], trustScore, node["version"],
                                     json.dumps(node["feeData"]), node["nodeRegistrationData"]["creationTime"],
                                     sync, http_code, http_msg, ssl_exp, 1, last_seen, json.dumps(displayInfo),last_updated
@@ -682,7 +678,7 @@ async def cacheNodes():
                                 sync = sync if sync != None else node["sync"]
 
                                 last_updated = int(time.time())
-                                db.update_node(
+                                await db.update_node(
                                     nodeHash, node["address"], geo_data, node["webServerUrl"], node["version"],
                                     json.dumps(node["feeData"]), node["nodeRegistrationData"]["creationTime"],
                                     sync, http_code, http_msg, ssl_exp, 1, last_seen, json.dumps(displayInfo),last_updated
@@ -714,10 +710,24 @@ async def cacheNodes():
                                     nodeHashToActivityPercentage = jsonResponse["nodeHashToActivityPercentage"]
                                     for nodeHash in nodeHashToActivityPercentage:
                                         stats[nodeHash][day] = nodeHashToActivityPercentage[nodeHash]["percentage"]
+                                    return True
+                        except (aiohttp.ClientResponseError) as e:
+                            url = e.request_info.url
+                            desc = (f"custom HTTP error -> {e.status} {e.message} ({url})")
+                            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                        except (ssl.SSLCertVerificationError) as e:
+                            desc = (f"custom SSL Error -> {e.__cause__} ({URL})")
+                            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                        except (aiohttp.ClientError) as e:
+                            url = e.request_info.url
+                            desc = (f"Connection Error -> {e.__cause__} ({url})")
+                            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                        except (json.JSONDecodeError) as e:
+                            desc = (f"Custom JSON Error -> {e} ({URL})")
+                            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
                         except Exception as e:
                             logger.error(e)
-                            return False
-                        return True
+                        return False
 
                     async with aiohttp.ClientSession() as session:
                         lastIndex = 0
@@ -747,7 +757,7 @@ async def cacheNodes():
 
                     for nodeHash in stats:
                         try:
-                            db.update_node_stats(nodeHash, json.dumps(stats[nodeHash]))
+                            await db.update_node_stats(nodeHash, json.dumps(stats[nodeHash]))
                         except Exception as e:
                             logger.error(f"{bcolors.FAIL}{e}{bcolors.ENDC}",f" on line {e.__traceback__.tb_lineno}")
                 logger.info(f"{bcolors.OKCYAN}[{network}] Stats Updated!{bcolors.ENDC}")
@@ -779,7 +789,19 @@ async def cacheNodes():
         logger.info(f"{bcolors.HEADER}{bcolors.UNDERLINE}Starting over...{bcolors.ENDC}")
 
 async def main():
+    global mainnet_db, testnet_db
+
     loop = asyncio.get_event_loop()
+
+    db = DBHelper(db_user,db_pass, db_name, db_host, loop)
+    await db
+    await db.setup()
+
+    mainnet_db = db.coti_node(COTI.MAINNET)
+    testnet_db = db.coti_node(COTI.TESTNET)
+    await mainnet_db
+    await testnet_db
+
     loop.create_task(updateTrustScores())
     await cacheNodes()
 try:
