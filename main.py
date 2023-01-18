@@ -21,6 +21,7 @@ ignore_list = verify_excempt_list = []
 rate_limit = 90
 rate_limit_interval = 60
 TrustScoreInterval = 1800
+display_info_interval = 3600
 
 required_settings = [
     "db_name",
@@ -41,6 +42,7 @@ settings_keys = {
     "rate_limit": int,
     "rate_limit_interval": int,
     "TrustScoreInterval": int,
+    "display_info_interval": int,
     "ignore_list": list,
     "verify_excempt_list": list
 }
@@ -71,6 +73,10 @@ except Exception as err:
     sys.exit()
 
 rate_limits = {}
+cached_NodeDisplayInfo = {
+    'timestamp': 0,
+    'data': None
+}
 
 # Enable logging
 logFormater = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -171,32 +177,25 @@ async def rateLimitCheck(URL, concurrent: int = None):
     else:
         rate_limits[URL]['api_call_count'] += 1
 
-
-ipinfo_handler = ipinfo.getHandlerAsync(ipinfo_token)
-
 async def geoData(ip):
-    if not geo_enabled:
-        return None
-    try:
-        
-        details = await ipinfo_handler.getDetails(ip)
-        if 'bogon' in details.all or 'anycast' in details.all:
+    if geo_enabled:
+        try:
+            ipinfo_handler = ipinfo.getHandlerAsync(ipinfo_token)
+            details = await ipinfo_handler.getDetails(ip)
+            if 'bogon' in details.all or 'anycast' in details.all:
+                return None
+            return details.all
+        except Exception as e:
+            logger.error(f"An error has occured: {e}")
             return None
-        return details.all
-    except Exception as e:
-        logger.error(f"An error has occured: {e}")
+    else:
         return None
-
-cached_NodeDisplayInfo = {
-    'timestamp': 0,
-    'data': None
-}
 
 async def getNodeDisplayInfo(nodeHash):
     global cached_NodeDisplayInfo
 
     try:
-        if time.time() <= (cached_NodeDisplayInfo['timestamp'] + 3600) and cached_NodeDisplayInfo['timestamp'] != 0:
+        if time.time() <= (cached_NodeDisplayInfo['timestamp'] + display_info_interval) and cached_NodeDisplayInfo['timestamp'] != 0:
             #logger.info(f"{bcolors.WARNING}({nodeHash}) Using cached NodeDisplayData...{bcolors.ENDC}")
             json_response = cached_NodeDisplayInfo['data']
         else:

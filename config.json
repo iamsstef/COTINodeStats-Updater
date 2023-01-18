@@ -13,6 +13,7 @@
     "rate_limit": 90,
     "rate_limit_interval": 60,
     "TrustScoreInterval": 1800,
+    "display_info_interval": 3600,
 
     "ignore_list": [
         "https://huobicotinode.io",
