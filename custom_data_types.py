@@ -30,6 +30,7 @@ class SyncStatus:
     Unsync = 0
     Sync = 1
     Unkown = 2
+    Unchanged = None
 
 class CustomSSLError(Exception):
     pass

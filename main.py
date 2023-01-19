@@ -188,6 +188,24 @@ async def rateLimitCheck(URL, concurrent: int = None):
     else:
         rate_limits[URL]['api_call_count'] += 1
 
+
+async def rateLimitFor(URL: str, list):
+    elist = {x: y for x,y in enumerate(list)}
+    position = 0
+    remaining = len(list)
+       
+    while remaining > 0:
+        rate = await rateLimitCheck(URL, remaining)
+        logger.debug(f"[{URL}] Current rate = {rate} | Remaining = {remaining} | API Rate {rate_limits[URL]['api_call_count']}") 
+        for i in range(rate):
+            currentIndex = (position + i)
+            yield currentIndex, elist[currentIndex]
+        position += (i + 1)
+        remaining = len(list) - position
+        logger.debug(f"currentIndex {currentIndex} | len(list) {len(list)} | position {position}")
+    return
+
+
 async def geoData(ip):
     if geo_enabled:
         try:
@@ -206,7 +224,7 @@ async def getNodeDisplayInfo(nodeHash):
 
     try:
         if time.time() <= (cached_NodeDisplayInfo['timestamp'] + display_info_interval) and cached_NodeDisplayInfo['timestamp'] != 0:
-            logger.debug(f"{bcolors.WARNING}({nodeHash}) Using cached NodeDisplayData...{bcolors.ENDC}")
+            #logger.debug(f"{bcolors.WARNING}({nodeHash}) Using cached NodeDisplayData...{bcolors.ENDC}")
             json_response = cached_NodeDisplayInfo['data']
         else:
             logger.info(f"{bcolors.WARNING}({nodeHash}) Renewing NodeDisplayData...{bcolors.ENDC}")
@@ -300,10 +318,10 @@ async def checkNodeStatus(urls, network):
         logger.debug(f"{bcolors.OKCYAN}Using ({masterNodeUrl}) as Master-Node{bcolors.ENDC}")
 
         #check if we got any online masternode
-        if not (masterNodeStatus == 200):
-            logger.error(f"{bcolors.FAIL}[Master-Node] Cancelling... No MasterNode found, can't check sync status{bcolors.ENDC}")
-            yield
-            return
+        #if not (masterNodeStatus == 200):
+        #    logger.error(f"{bcolors.FAIL}[Master-Node] Cancelling... No MasterNode found, can't check sync status{bcolors.ENDC}")
+        #    yield
+        #    return
             
         unix_timestamp = time.time()
 
@@ -354,7 +372,7 @@ async def checkNodeStatus(urls, network):
                         })
             except CustomSSLError as e:
                 logger.debug(f'Custom SSL Error: {e} ({url})')
-                data = (None, f"{e}", SyncStatus.Unkown, SSLExpDate)
+                data = (None, f"{e}", None, SyncStatus.Unkown, SSLExpDate)
                 proccesed_req = nodeHash, data
                 yield proccesed_req
 
@@ -363,48 +381,53 @@ async def checkNodeStatus(urls, network):
             SSLExpDate = data.SSLExpDate
 
             try:
+                latency = None
+                start = loop.time()
                 if verify:
                     req = session.get(url, ssl = True)
                 else:
                     req = session.get(url, ssl = False)
-
+                
                 async with req as node_response:
+                    latency = (loop.time() - start) * 1000#ms
                     httpCode = node_response.status
                     http_msg = data.http_msg if data.http_msg else httpCodeDesc[httpCode]
                     node_response.raise_for_status()
+                    if not (masterNodeStatus == 200):
+                        return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unchanged, SSLExpDate)
                     try:
                         if httpCode == 200:
                             node_json_response = await node_response.json()
                             nodeIndex = int(node_json_response['index'])
                             if nodeIndex:
                                 if nodeIndex >= (index - indexGap):
-                                    return nodeHash, (httpCode, http_msg, SyncStatus.Sync, SSLExpDate)
+                                    return nodeHash, (httpCode, http_msg, latency, SyncStatus.Sync, SSLExpDate)
                                 else:
-                                    return nodeHash, (httpCode, http_msg,  SyncStatus.Unsync, SSLExpDate)
+                                    return nodeHash, (httpCode, http_msg,  latency, SyncStatus.Unsync, SSLExpDate)
                             else:
-                                return nodeHash, (httpCode, "Malfomed Json Data Received", SyncStatus.Unsync, SSLExpDate)
+                                return nodeHash, (httpCode, "Malfomed Json Data Received", latency, SyncStatus.Unsync, SSLExpDate)
                         else:
-                            return nodeHash, (httpCode, http_msg, SyncStatus.Unkown, SSLExpDate)
+                            return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unkown, SSLExpDate)
                     except TypeError as type_err:
                         logger.error(f'TypeError occurred: {type_err}')
-                        return nodeHash, (httpCode, http_msg, SyncStatus.Unsync, SSLExpDate)
+                        return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unsync, SSLExpDate)
                     except KeyError as key_err:
                         logger.error(f'KeyError occurred: {key_err}')
-                        return nodeHash, (httpCode, http_msg, SyncStatus.Unsync, SSLExpDate)
+                        return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unsync, SSLExpDate)
                     except json.JSONDecodeError as json_err:
                         logger.error(f'Invalid JSON data error occurred: {json_err}')
-                        return nodeHash, (httpCode, "Malformed Json Data Received", SyncStatus.Unsync, SSLExpDate)
+                        return nodeHash, (httpCode, "Malformed Json Data Received", latency, SyncStatus.Unsync, SSLExpDate)
             except (aiohttp.ClientResponseError) as e: #HTTPError
                 logger.warning(f'HTTP error occurred: {e}')
-                return nodeHash, (httpCode, http_msg, SyncStatus.Unkown, SSLExpDate)
+                return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unkown, SSLExpDate)
             except ssl.SSLCertVerificationError as e: #SSLError
                 logger.warning(f'SSL Verification Error occurred: {e}')
                 desc = e.__cause__
-                return nodeHash, (None, f"{desc}", SyncStatus.Unkown, SSLExpDate)
+                return nodeHash, (None, f"{desc}", latency, SyncStatus.Unkown, SSLExpDate)
             except (aiohttp.ClientError) as e: #GENERIC aiohttp Exception
                 logger.warning(f'An error occurred: {e}')
                 desc = e.__cause__
-                return nodeHash, (None, f"{desc}", SyncStatus.Unkown, SSLExpDate)
+                return nodeHash, (None, f"{desc}", latency, SyncStatus.Unkown, SSLExpDate)
 
         async with aiohttp.ClientSession() as session:
             tasks = []
@@ -474,26 +497,15 @@ async def updateTrustScores():
             db_nodes = await db.get_nodes()
             nodeHashes = list((x for x in db_nodes))
             
-            lastIndex = 0
-            position = 0
-            remaining = len(nodeHashes)
             tasks = []
 
-            while remaining > 0:
-                rate = await rateLimitCheck(URL, remaining)
-                logger.debug(f"[{URL}][{network}] Current rate = {rate} | Remaining = {remaining} | API Rate {rate_limits[URL]['api_call_count']}")
-                for i in range(rate):
-                    currentIndex = (position + i)
-                    nodeHash = nodeHashes[currentIndex]
+            async for i, nodeHash in rateLimitFor(URL, nodeHashes):
                     class data:
                         pass
                     data.nodeHash = nodeHash
                     task = asyncio.create_task(getTrustScore(URL, data))
                     tasks.append(task)
                     del data
-                position += (i + 1)
-                remaining = len(nodeHashes) - position
-                logger.debug(f"lastIndex {lastIndex} | len(nodeHashes) {len(nodeHashes)} | position {position}")
 
             async for data in as_completed_async(tasks):
                 data = await data
@@ -557,6 +569,7 @@ async def cacheNodes():
                                     logger.info(f"{bcolors.OKBLUE}URL [{db_node_data['url']}] last seen longer than a hour ago, ignoring...{bcolors.ENDC}")
                                     http_code = db_node_data['http_code']
                                     http_msg = db_node_data['http_msg']
+                                    latency = db_node_data['latency']
                                     sync = db_node_data['sync']
                                     ssl_exp = db_node_data['ssl_exp']
 
@@ -579,7 +592,7 @@ async def cacheNodes():
                                     await db.update_node(
                                         db_node, db_node_data["ip"], geo_data, db_node_data["url"], db_node_data["version"],
                                         json.dumps(db_node_data['feeData']), db_node_data["creationTime"],
-                                        sync, http_code, http_msg, ssl_exp, 0, db_node_data['last_seen'], json.dumps(displayInfo),last_updated
+                                        sync, http_code, http_msg, latency, ssl_exp, 0, db_node_data['last_seen'], json.dumps(displayInfo),last_updated
                                     )
                                     del last_seen, sync, http_code, ssl_exp, geo_data, displayInfo, db_node, db_node_data
                         if urls:
@@ -593,10 +606,10 @@ async def cacheNodes():
                                 db_node_data = db_nodes[db_node]
                                 #update node status in db
                                 if nodeResult:
-                                    http_code, http_msg, sync, ssl_exp = nodeResult
+                                    http_code, http_msg, latency, sync, ssl_exp = nodeResult
                                 else:
-                                    http_code, http_msg, sync, ssl_exp = (None, 'Skipped: In ignore list', SyncStatus.Unkown, None)
-
+                                    http_code, http_msg, latency, sync, ssl_exp = (None, 'Skipped: In ignore list', None, SyncStatus.Unkown, None)
+                                
                                 if force_geo:
                                     try:
                                         geo_data = await geoData(db_node_data['ip'])
@@ -636,9 +649,9 @@ async def cacheNodes():
                             last_seen = datetime.timestamp(datetime.now())
 
                             if nodeResult:
-                                http_code, http_msg, sync, ssl_exp = nodeResult
+                                http_code, http_msg, latency, sync, ssl_exp = nodeResult
                             else:
-                                http_code, http_msg, sync, ssl_exp = (None, 'Skipped: In ignore list', SyncStatus.Unkown, None)
+                                http_code, http_msg, latency, sync, ssl_exp = (None, 'Skipped: In ignore list', None, SyncStatus.Unkown, None)
                             sync = sync if sync != None else SyncStatus.Unkown
 
                             name, image = await getNodeDisplayInfo(nodeHash)
@@ -661,7 +674,7 @@ async def cacheNodes():
                                 await db.add_node(
                                     nodeHash, node["address"], geo_data, node["webServerUrl"], trustScore, node["version"],
                                     json.dumps(node["feeData"]), node["nodeRegistrationData"]["creationTime"],
-                                    sync, http_code, http_msg, ssl_exp, 1, last_seen, json.dumps(displayInfo),last_updated
+                                    sync, http_code, http_msg, latency, ssl_exp, 1, last_seen, json.dumps(displayInfo),last_updated
                                 )
                             else:
                                 #update it
@@ -681,7 +694,7 @@ async def cacheNodes():
                                 await db.update_node(
                                     nodeHash, node["address"], geo_data, node["webServerUrl"], node["version"],
                                     json.dumps(node["feeData"]), node["nodeRegistrationData"]["creationTime"],
-                                    sync, http_code, http_msg, ssl_exp, 1, last_seen, json.dumps(displayInfo),last_updated
+                                    sync, http_code, http_msg, latency, ssl_exp, 1, last_seen, json.dumps(displayInfo),last_updated
                                 )
                 else:
                     pass
@@ -730,29 +743,20 @@ async def cacheNodes():
                         return False
 
                     async with aiohttp.ClientSession() as session:
-                        lastIndex = 0
-                        position = 0
-                        remaining = len(days)
                         stats_tasks = []
                         
-                        while remaining > 0:
-                            rate = await rateLimitCheck(URL, remaining)
-                            logger.debug(f"Current rate = {rate} | Remaining = {remaining} | API Rate {rate_limits[URL]['api_call_count']}")
-                            for i in range(rate):
-                                currentIndex = (position + i)
-                                day = days[currentIndex]
-                                data = {
+                        async for i, day in rateLimitFor(URL, days):
+                            data = {
                                 "nodeHashes": [
                                     db_nodeHash for db_nodeHash in db_nodes
                                 ],
                                 "startDate": "1000-01-01T00:00:00.0000" if day == 'total' else (datetime.now() - timedelta(days=day)).strftime("%Y-%m-%dT%H:%M:%S.%f"),
                                 "endDate": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
-                                }
-                                
-                                stats_task = asyncio.ensure_future(proccess_stat(session, URL, data, day))
-                                stats_tasks.append(stats_task)
-                            position += (i + 1)
-                            remaining = len(days) - position
+                            }
+                            
+                            stats_task = asyncio.ensure_future(proccess_stat(session, URL, data, day))
+                            stats_tasks.append(stats_task)
+
                         await asyncio.gather(*stats_tasks)
 
                     for nodeHash in stats:
@@ -811,9 +815,8 @@ async def main():
 
     await asyncio.gather(*tasks)
     loop.stop()
-    loop.close()
     logger.info("All tasks have closed. Exiting...")
-    sys.exit()
+
 try:
     asyncio.run(main())
     

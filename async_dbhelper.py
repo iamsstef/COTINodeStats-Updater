@@ -53,6 +53,7 @@ class DBHelper:
                     sync INT NOT NULL,
                     http_code INT NULL,
                     http_msg TEXT NULL,
+                    latency BIGINT NULL,
                     ssl_exp BIGINT,
                     status BOOL NOT NULL,
                     last_seen BIGINT,
@@ -75,6 +76,7 @@ class DBHelper:
                     sync INT NOT NULL,
                     http_code INT NULL,
                     http_msg TEXT NULL,
+                    latency BIGINT NULL,
                     ssl_exp BIGINT,
                     status BOOL NOT NULL,
                     last_seen BIGINT,
@@ -121,18 +123,18 @@ class DBHelper:
                         except:
                             return None
 
-        async def add_node(self, nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,ssl_exp,status,last_seen, displayInfo,last_updated):
+        async def add_node(self, nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen, displayInfo,last_updated):
             async with self.pool.acquire() as conn:
                 conn.autocommit = True
                 async with conn.cursor() as cur:
                     stmt = f'''INSERT INTO {self.network}
-                    (nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,ssl_exp,status,last_seen, displayInfo,last_updated)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'''
-                    args = (nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,ssl_exp,status,last_seen, displayInfo,last_updated)
+                    (nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen, displayInfo,last_updated)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'''
+                    args = (nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen, displayInfo,last_updated)
                     await cur.execute(stmt, args)
                     await conn.commit()
 
-        async def update_node(self, nodeHash,ip,geo,url,version,feeData,creationTime: int,sync: int, http_code: int, http_msg: str, ssl_exp, status: int, last_seen: int, displayInfo, last_updated: int):
+        async def update_node(self, nodeHash,ip,geo,url,version,feeData,creationTime: int,sync: int, http_code: int, http_msg: str, latency: int, ssl_exp, status: int, last_seen: int, displayInfo, last_updated: int):
             async with self.pool.acquire() as conn:
                 conn.autocommit = True
                 async with conn.cursor() as cur:
@@ -146,13 +148,14 @@ class DBHelper:
                     sync = %s,
                     http_code = %s,
                     http_msg = %s,
+                    latency = %s,
                     ssl_exp = %s,
                     status = %s,
                     last_seen = %s,
                     displayInfo = %s,
                     last_updated = %s
                     WHERE nodeHash = %s'''
-                    args = (ip,geo,url,version,feeData,creationTime,sync,http_code,http_msg,ssl_exp,status,last_seen,displayInfo,last_updated, nodeHash)
+                    args = (ip,geo,url,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen,displayInfo,last_updated, nodeHash)
                     await cur.execute(stmt, args)
                     await conn.commit()
 
@@ -182,7 +185,7 @@ class DBHelper:
             async with self.pool.acquire() as conn:
                 conn.autocommit = True            
                 async with conn.cursor() as cur:
-                    stmt = f"SELECT nodeHash, ip, url, trustScore, version, feeData, creationTime, sync, http_code, ssl_exp, status, last_seen, stats, geo, displayInfo, http_msg FROM {self.network}"
+                    stmt = f"SELECT nodeHash, ip, url, trustScore, version, feeData, creationTime, sync, http_code, ssl_exp, status, last_seen, stats, geo, displayInfo, http_msg, latency FROM {self.network}"
                     await cur.execute(stmt)
                     if cur:
                         result = {
@@ -196,6 +199,7 @@ class DBHelper:
                                 'sync': x[7],
                                 'http_code': x[8],
                                 'http_msg': x[15],
+                                'latency': x[16],
                                 'ssl_exp': x[9],
                                 'status': x[10],
                                 'last_seen': x[11],
@@ -211,7 +215,7 @@ class DBHelper:
             async with self.pool.acquire() as conn:
                 conn.autocommit = True            
                 async with conn.cursor() as cur:
-                    stmt = f"SELECT ip, url, trustScore, version, feeData, creationTime, sync, http_code, ssl_exp, status, last_seen, stats, geo, displayInfo, http_msg FROM {self.network} WHERE nodeHash = %s LIMIT 1"
+                    stmt = f"SELECT ip, url, trustScore, version, feeData, creationTime, sync, http_code, ssl_exp, status, last_seen, stats, geo, displayInfo, http_msg, latency FROM {self.network} WHERE nodeHash = %s LIMIT 1"
                     args = (nodeHash, )
                     await cur.execute(stmt, args)
                     if cur:
@@ -227,6 +231,7 @@ class DBHelper:
                                 'sync': row[6],
                                 'http_code': row[7],
                                 'http_msg': row[14],
+                                'latency': row[15],
                                 'ssl_exp': row[8],
                                 'status': row[9],
                                 'last_seen': row[10],
