@@ -25,6 +25,7 @@ try {
         "ssl_exp",
         "status",
         "last_seen",
+        "last_event",
         "stats",
         "displayInfo",
         "last_updated"
@@ -77,6 +78,7 @@ try {
                     }
                 } else {
                     $response['data'] = array(
+                        "nodeHash" => $row["nodeHash"],
                         "ip" => $row["ip"],
                         "geo" => json_decode($row["geo"], true),
                         "url" => $row["url"],
@@ -91,6 +93,7 @@ try {
                         "ssl_exp" => $row["ssl_exp"],
                         "status" => $row["status"],
                         "last_seen" => $row["last_seen"],
+                        "last_event" => $row["last_event"],
                         "stats" => json_decode($row["stats"], true),
                         "displayInfo" => json_decode($row["displayInfo"], true),
                         'last_updated' => $row["last_updated"]
@@ -115,6 +118,7 @@ try {
                     }
                 } else {
                     $response['data'] = array(
+                        "nodeHash" => $row["nodeHash"],
                         "ip" => $row["ip"],
                         "geo" => json_decode($row["geo"], true),
                         "url" => $row["url"],
@@ -129,6 +133,7 @@ try {
                         "ssl_exp" => $row["ssl_exp"],
                         "status" => $row["status"],
                         "last_seen" => $row["last_seen"],
+                        "last_event" => $row["last_event"],
                         "stats" => json_decode($row["stats"], true),
                         "displayInfo" => json_decode($row["displayInfo"], true),
                         'last_updated' => $row["last_updated"]
@@ -153,6 +158,7 @@ try {
                 "ssl_exp" => $row["ssl_exp"],
                 "status" => $row["status"],
                 "last_seen" => $row["last_seen"],
+                "last_event" => $row["last_event"],
                 "stats" => json_decode($row["stats"], true),
                 "displayInfo" => json_decode($row["displayInfo"], true)
             );

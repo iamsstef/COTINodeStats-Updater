@@ -26,7 +26,8 @@ class DBHelper:
                     user=self.username,
                     password=self.password,
                     db=self.dbname,
-                    loop = self.loop
+                    loop = self.loop,
+                    autocommit = True
                 )
             except aiomysql.Error as e:
                 print(f"Error connecting to MariaDB Platform: {e}")
@@ -57,6 +58,7 @@ class DBHelper:
                     ssl_exp BIGINT,
                     status BOOL NOT NULL,
                     last_seen BIGINT,
+                    last_event BIGINT NOT NULL,
                     stats JSON,
                     displayInfo JSON,
                     last_updated BIGINT NULL
@@ -80,6 +82,7 @@ class DBHelper:
                     ssl_exp BIGINT,
                     status BOOL NOT NULL,
                     last_seen BIGINT,
+                    last_event BIGINT NOT NULL,
                     stats JSON,
                     displayInfo JSON,
                     last_updated BIGINT NULL
@@ -102,6 +105,29 @@ class DBHelper:
                 return self
             return closure().__await__()
 
+        async def latest_version(self):
+            async with self.pool.acquire() as conn:
+                conn.autocommit = True            
+                async with conn.cursor() as cur:
+                    stmt = f'SELECT version FROM {self.network}'
+                    await cur.execute(stmt)
+                    if cur:
+                        try:
+                            versions = {}
+                            version = str()
+                            async for row in cur:
+                                for s in [*row[0]]:
+                                    if s.isdigit():
+                                        version = f"{version}{s}"
+                                    if int(version) not in versions:
+                                        versions[int(version)] = row[0]
+                            if versions:
+                                newest_version = versions[max(versions)]
+                                return newest_version
+                            return None
+                        except:
+                            return
+
         async def last_updated(self, human = False):
             async with self.pool.acquire() as conn:
                 conn.autocommit = True
@@ -123,18 +149,18 @@ class DBHelper:
                         except:
                             return None
 
-        async def add_node(self, nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen, displayInfo,last_updated):
+        async def add_node(self, nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen,last_event: int, displayInfo,last_updated):
             async with self.pool.acquire() as conn:
                 conn.autocommit = True
                 async with conn.cursor() as cur:
                     stmt = f'''INSERT INTO {self.network}
-                    (nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen, displayInfo,last_updated)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'''
-                    args = (nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen, displayInfo,last_updated)
+                    (nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen,last_event, displayInfo,last_updated)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'''
+                    args = (nodeHash,ip,geo,url,trustScore,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen,last_event, displayInfo,last_updated)
                     await cur.execute(stmt, args)
                     await conn.commit()
 
-        async def update_node(self, nodeHash,ip,geo,url,version,feeData,creationTime: int,sync: int, http_code: int, http_msg: str, latency: int, ssl_exp, status: int, last_seen: int, displayInfo, last_updated: int):
+        async def update_node(self, nodeHash,ip,geo,url,version,feeData,creationTime: int,sync: int, http_code: int, http_msg: str, latency: int, ssl_exp, status: int, last_seen: int, last_event: int, displayInfo, last_updated: int):
             async with self.pool.acquire() as conn:
                 conn.autocommit = True
                 async with conn.cursor() as cur:
@@ -152,10 +178,11 @@ class DBHelper:
                     ssl_exp = %s,
                     status = %s,
                     last_seen = %s,
+                    last_event = %s,
                     displayInfo = %s,
                     last_updated = %s
                     WHERE nodeHash = %s'''
-                    args = (ip,geo,url,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen,displayInfo,last_updated, nodeHash)
+                    args = (ip,geo,url,version,feeData,creationTime,sync,http_code,http_msg,latency,ssl_exp,status,last_seen,last_event,displayInfo,last_updated, nodeHash)
                     await cur.execute(stmt, args)
                     await conn.commit()
 
@@ -185,7 +212,7 @@ class DBHelper:
             async with self.pool.acquire() as conn:
                 conn.autocommit = True            
                 async with conn.cursor() as cur:
-                    stmt = f"SELECT nodeHash, ip, url, trustScore, version, feeData, creationTime, sync, http_code, ssl_exp, status, last_seen, stats, geo, displayInfo, http_msg, latency FROM {self.network}"
+                    stmt = f"SELECT nodeHash, ip, url, trustScore, version, feeData, creationTime, sync, http_code, ssl_exp, status, last_seen, stats, geo, displayInfo, http_msg, latency, last_event FROM {self.network}"
                     await cur.execute(stmt)
                     if cur:
                         result = {
@@ -203,6 +230,7 @@ class DBHelper:
                                 'ssl_exp': x[9],
                                 'status': x[10],
                                 'last_seen': x[11],
+                                'last_event': x[17],
                                 'stats': json.loads(x[12]) if x[12] else None,
                                 'geo': json.loads(x[13]) if x[13] else None,
                                 'displayInfo': json.loads(x[14]) if x[14] else None
@@ -215,7 +243,7 @@ class DBHelper:
             async with self.pool.acquire() as conn:
                 conn.autocommit = True            
                 async with conn.cursor() as cur:
-                    stmt = f"SELECT ip, url, trustScore, version, feeData, creationTime, sync, http_code, ssl_exp, status, last_seen, stats, geo, displayInfo, http_msg, latency FROM {self.network} WHERE nodeHash = %s LIMIT 1"
+                    stmt = f"SELECT ip, url, trustScore, version, feeData, creationTime, sync, http_code, ssl_exp, status, last_seen, stats, geo, displayInfo, http_msg, latency, last_event FROM {self.network} WHERE nodeHash = %s LIMIT 1"
                     args = (nodeHash, )
                     await cur.execute(stmt, args)
                     if cur:
@@ -235,6 +263,7 @@ class DBHelper:
                                 'ssl_exp': row[8],
                                 'status': row[9],
                                 'last_seen': row[10],
+                                'last_event': row[16],
                                 'stats': json.loads(row[11]) if row[11] else None,
                                 'geo': json.loads(row[12]) if row[12] else None,
                                 'displayInfo': json.loads(row[13]) if row[13] else None
