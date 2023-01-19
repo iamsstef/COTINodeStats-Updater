@@ -191,7 +191,6 @@ async def rateLimitCheck(URL, concurrent: int = None):
 async def geoData(ip):
     if geo_enabled:
         try:
-            ipinfo_handler = ipinfo.getHandlerAsync(ipinfo_token)
             details = await ipinfo_handler.getDetails(ip)
             if 'bogon' in details.all or 'anycast' in details.all:
                 return None
@@ -441,7 +440,7 @@ async def getTrustScore(url, rdata):
                     trustScore = json_response['trustScore']
                     rdata.trustScore = trustScore
                 else:
-                   rdata.trustScore = 0.0
+                    rdata.trustScore = 0.0
                 return rdata
         except KeyError as key_error:
             logger.error(f"KeyError: Malformed JSON response from the server. -> {key_error}")
@@ -479,20 +478,20 @@ async def updateTrustScores():
             position = 0
             remaining = len(nodeHashes)
             tasks = []
-            
+
             while remaining > 0:
                 rate = await rateLimitCheck(URL, remaining)
                 logger.debug(f"[{URL}][{network}] Current rate = {rate} | Remaining = {remaining} | API Rate {rate_limits[URL]['api_call_count']}")
                 for i in range(rate):
-                    lastIndex = i
-                    nodeHash = nodeHashes[i]
+                    currentIndex = (position + i)
+                    nodeHash = nodeHashes[currentIndex]
                     class data:
                         pass
                     data.nodeHash = nodeHash
                     task = asyncio.create_task(getTrustScore(URL, data))
                     tasks.append(task)
                     del data
-                position += (lastIndex + 1)
+                position += (i + 1)
                 remaining = len(nodeHashes) - position
                 logger.debug(f"lastIndex {lastIndex} | len(nodeHashes) {len(nodeHashes)} | position {position}")
 
@@ -503,6 +502,7 @@ async def updateTrustScores():
                 if not trustScore: trustScore = db_nodes[nodeHash]['trustScore']
                 await db.update_node_trustScore(nodeHash, trustScore)
             logger.info(f"{bcolors.OKCYAN}[{network}] TrustScores Updated!{bcolors.ENDC}")
+        if run_once: break
         await asyncio.sleep(TrustScoreInterval)
 
 async def cacheNodes():
@@ -739,8 +739,8 @@ async def cacheNodes():
                             rate = await rateLimitCheck(URL, remaining)
                             logger.debug(f"Current rate = {rate} | Remaining = {remaining} | API Rate {rate_limits[URL]['api_call_count']}")
                             for i in range(rate):
-                                lastIndex = i
-                                day = days[i]
+                                currentIndex = (position + i)
+                                day = days[currentIndex]
                                 data = {
                                 "nodeHashes": [
                                     db_nodeHash for db_nodeHash in db_nodes
@@ -751,7 +751,7 @@ async def cacheNodes():
                                 
                                 stats_task = asyncio.ensure_future(proccess_stat(session, URL, data, day))
                                 stats_tasks.append(stats_task)
-                            position += (lastIndex + 1)
+                            position += (i + 1)
                             remaining = len(days) - position
                         await asyncio.gather(*stats_tasks)
 
@@ -764,7 +764,7 @@ async def cacheNodes():
 
             last_updated = datetime.now(tz=pytz.UTC).strftime("%d-%m-%y, %H:%M")
             logger.info(f"{bcolors.OKGREEN}Last Updated: {last_updated} | Time Elapsed: {((time.time() - start_time) / 60)} minutes.{bcolors.ENDC}")
-            if run_once: sys.exit()
+            if run_once: break
 
         except (aiohttp.ClientResponseError) as e:
             url = e.request_info.url
@@ -789,7 +789,7 @@ async def cacheNodes():
         logger.info(f"{bcolors.HEADER}{bcolors.UNDERLINE}Starting over...{bcolors.ENDC}")
 
 async def main():
-    global mainnet_db, testnet_db
+    global mainnet_db, testnet_db, ipinfo_handler
 
     loop = asyncio.get_event_loop()
 
@@ -802,8 +802,18 @@ async def main():
     await mainnet_db
     await testnet_db
 
-    loop.create_task(updateTrustScores())
-    await cacheNodes()
+    if geo_enabled:
+        ipinfo_handler = ipinfo.getHandlerAsync(ipinfo_token)
+
+    tasks = []
+    tasks.append(loop.create_task(cacheNodes()))
+    tasks.append(loop.create_task(updateTrustScores()))
+
+    await asyncio.gather(*tasks)
+    loop.stop()
+    loop.close()
+    logger.info("All tasks have closed. Exiting...")
+    sys.exit()
 try:
     asyncio.run(main())
     
