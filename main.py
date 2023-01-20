@@ -22,7 +22,7 @@ from async_dbhelper import DBHelper
 
 debug = geo_enabled = force_geo = run_once = False
 db_name = db_user = db_pass = db_host = ipinfo_token = ""
-ignore_list = verify_excempt_list = []
+ignore_list = verify_exempt_list = []
 indexGap = 5
 rate_limit = 90
 rate_limit_interval = 60
@@ -52,7 +52,7 @@ settings_keys = {
     "TrustScoreInterval": int,
     "display_info_interval": int,
     "ignore_list": list,
-    "verify_excempt_list": list
+    "verify_exempt_list": list
 }
 
 try:
@@ -352,7 +352,7 @@ async def checkNodeStatus(urls, network):
                 else:
                     SSLExpDate = SSLResult
                     if unix_timestamp > SSLExpDate:
-                        if url in verify_excempt_list:
+                        if url in verify_exempt_list:
                             syncCheckNodes.append({
                                 'nodeHash': nodeHash,
                                 'url': url,
@@ -368,7 +368,7 @@ async def checkNodeStatus(urls, network):
                             'url': url,
                             'SSLExpDate': SSLExpDate,
                             'http_msg': None,
-                            'verify': True
+                            'verify': True if url not in verify_exempt_list else False
                         })
             except CustomSSLError as e:
                 logger.debug(f'Custom SSL Error: {e} ({url})')
