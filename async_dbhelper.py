@@ -143,7 +143,7 @@ class DBHelper:
                         try:
                             ts = row[0].timestamp()
                             if human:
-                                readable = datetime.fromtimestamp(ts).strftime('%d-%m-%y at %H:%M UTC')
+                                readable = datetime.utcfromtimestamp(ts).strftime('%d-%m-%y at %H:%M UTC')
                                 return readable
                             return ts
                         except:
