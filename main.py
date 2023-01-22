@@ -6,7 +6,7 @@ import sys
 try:
     import asyncio
     import logging, time, pytz, os, json, re
-    import aiohttp, ipinfo
+    import aiohttp, aioping, ipinfo
     import ssl, OpenSSL, socket
     import urllib.parse, http.client
     from datetime import datetime, timedelta
@@ -19,6 +19,7 @@ from custom_data_types import *
 COTI = COTI()
 
 from async_dbhelper import DBHelper
+from aiohttp_trace import request_tracer
 
 debug = geo_enabled = force_geo = run_once = False
 db_name = db_user = db_pass = db_host = ipinfo_token = ""
@@ -279,6 +280,16 @@ def checkSSL(URL: str):
         return f"{e}"
 
 
+async def getLatency(url):
+    domain = urllib.parse.urlparse(url).netloc
+    try:
+        latency = await aioping.ping(domain) * 1000
+    except Exception as e:
+        logger.warning(f"{bcolors.FAIL}{e} for {domain}{bcolors.ENDC}")
+        latency = None
+    return latency
+
+
 async def checkNodeStatus(urls, network):
     try:
         logger.debug(f"{bcolors.OKCYAN}Current Master-Nodes -> {masterNodes[network]}{bcolors.ENDC}")
@@ -372,24 +383,29 @@ async def checkNodeStatus(urls, network):
                         })
             except CustomSSLError as e:
                 logger.debug(f'Custom SSL Error: {e} ({url})')
+                #latency = await getLatency(url)
                 data = (None, f"{e}", None, SyncStatus.Unkown, SSLExpDate)
                 proccesed_req = nodeHash, data
                 yield proccesed_req
 
+        trace = {}
         async def proccess_req(session: aiohttp.ClientSession, url, data, verify = True):
+            nonlocal trace
             nodeHash = data.nodeHash
             SSLExpDate = data.SSLExpDate
 
             try:
-                latency = None
-                start = loop.time()
+                #start = time.perf_counter()#loop.time()
                 if verify:
                     req = session.get(url, ssl = True)
                 else:
                     req = session.get(url, ssl = False)
-                
+
                 async with req as node_response:
-                    latency = (loop.time() - start) * 1000#ms
+                    latency = trace[url]['transfer']
+                    RTT = trace[url]['total']
+                    del trace[url]
+                    #RTT = (time.perf_counter() - start) * 1000#ms
                     httpCode = node_response.status
                     http_msg = data.http_msg if data.http_msg else httpCodeDesc[httpCode]
                     node_response.raise_for_status()
@@ -429,7 +445,7 @@ async def checkNodeStatus(urls, network):
                 desc = e.__cause__
                 return nodeHash, (None, f"{desc}", latency, SyncStatus.Unkown, SSLExpDate)
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trace_configs=[request_tracer(trace)]) as session:
             tasks = []
             for syncCheckNode in syncCheckNodes:
                 url = syncCheckNode['url'] + "/transaction/index"
@@ -444,6 +460,7 @@ async def checkNodeStatus(urls, network):
             
             async for proccesed_req in as_completed_async(tasks): #async
                 yield await proccesed_req
+            #del trace
 
     except Exception as e:
         logger.error(f"{bcolors.FAIL}{e}{bcolors.ENDC} in Line {e.__traceback__.tb_lineno}")
