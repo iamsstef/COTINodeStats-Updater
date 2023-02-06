@@ -97,6 +97,7 @@ TrustScoreNodeURLs = {
     COTI.TESTNET: None
 }
 httpCodeDesc = http.client.responses
+http_ok_codes = [200, 201]
 
 # Enable logging
 logFormater = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -106,7 +107,7 @@ logSH = logging.StreamHandler(sys.stdout)
 logSH.setFormatter(logFormater)
 logSH.setLevel(log_level)
 
-logFH = logging.FileHandler("main.py.debug.log")
+logFH = logging.FileHandler("MainAPP.log")
 logFH.setFormatter(logFormater)
 logFH.setLevel(logging.ERROR)
 
@@ -243,17 +244,12 @@ async def getNodeDisplayInfo(nodeHash):
             cached_NodeDisplayInfo['data'] = json_response
 
         if nodeHash in json_response:
-            display_info = json_response[nodeHash]
+            display_info = json_response.get(nodeHash)
 
-            name = display_info['name'] if 'name' in display_info else None
+            name = display_info.get('name')
 
-            if 'image' in display_info:
-                if not display_info['image'].endswith('.svg'):
-                    image = f"https://pay.coti.io/nodes/{display_info['image']}"
-                else:
-                    image = None
-            else:
-                image = None
+            if image := display_info.get('image'):
+                image = f"https://pay.coti.io/nodes/{image}" if not image.endswith('.svg') else None
             
             return name, image
         else: return None, None
@@ -307,8 +303,12 @@ async def checkNodeStatus(urls, network):
                         masterNodeStatus = masterNode_response.status
                         masterNode_response.raise_for_status()
                         masterNode_jsonResponse = await masterNode_response.json()
-                        index = int(masterNode_jsonResponse['index'])
-                        if not index: raise KeyError
+                        masterNode_jsonResponse = dict(masterNode_jsonResponse)
+                        if masterNode_jsonResponse.get('status') == 'Error':
+                            raise Exception(f'data -> {str(masterNode_jsonResponse)}')
+                        else:
+                            index = masterNode_jsonResponse.get('index')
+                            if not index: raise Exception(f'data -> {str(masterNode_jsonResponse)}')
                 break
             except (aiohttp.ClientResponseError) as http_err:#except HTTPError as http_err:
                 logger.error(f'{bcolors.FAIL}[Master-Node]{bcolors.ENDC} ({masterNodeUrl}) HTTP error occurred: {http_err}')
@@ -411,13 +411,14 @@ async def checkNodeStatus(urls, network):
                     httpCode = node_response.status
                     http_msg = data.http_msg if data.http_msg else httpCodeDesc[httpCode]
                     node_response.raise_for_status()
-                    if not (masterNodeStatus == 200):
+                    if masterNodeStatus not in http_ok_codes:
                         return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unchanged, SSLExpDate)
                     try:
-                        if httpCode == 200:
+                        if httpCode not in http_ok_codes:
                             node_json_response = await node_response.json()
-                            nodeIndex = int(node_json_response['index'])
-                            if nodeIndex:
+                            node_json_response = dict(node_json_response)
+                            
+                            if nodeIndex := node_json_response.get('index'):
                                 if nodeIndex >= (index - indexGap):
                                     return nodeHash, (httpCode, http_msg, latency, SyncStatus.Sync, SSLExpDate)
                                 else:
@@ -486,14 +487,15 @@ async def getLastEvent(url, nodeHash):
             async with session.post(url + '/statistics/nodeLastEvent', json = data) as response:
                 response.raise_for_status()
                 json_response = await response.json()
-                if json_response['status'] == "Success":
-                    _lastEvent = json_response['lastEvent']
-                    lastEvent = {
-                       "recordTime": _lastEvent['recordTime'],
-                       "nodeStatus": _lastEvent['nodeStatus']
-                    }
-                    rdata = lastEvent
-                    return rdata
+                json_response = dict(json_response)
+                if json_response.get('status') == "Success":
+                    if _lastEvent := json_response.get('lastEvent'):
+                        lastEvent = {
+                            "recordTime": _lastEvent.get('recordTime'),
+                            "nodeStatus": _lastEvent.get('nodeStatus')
+                        }
+                        rdata = lastEvent
+                        return rdata
         except KeyError as key_error:
             logger.error(f"KeyError: Malformed JSON response from the server. -> {key_error}")
         except (aiohttp.ClientResponseError) as e: #HTTPError
@@ -527,8 +529,10 @@ async def getTrustScore(url, rdata):
             async with session.post(url + '/usertrustscore', json = data) as response:
                 response.raise_for_status()
                 json_response = await response.json()
-                if json_response['status'] == "Success":
-                    trustScore = json_response['trustScore']
+                json_response = dict(json_response)
+                if json_response.get('status') == "Success":
+                    trustScore = json_response.get('trustScore')
+                    trustScore = trustScore if trustScore else 0.0
                     rdata.trustScore = trustScore
                 else:
                     rdata.trustScore = 0.0
@@ -599,54 +603,101 @@ async def cacheNodes():
             masterNodes[COTI.MAINNET].clear()
             masterNodes[COTI.TESTNET].clear()
             for network, URL in URLs.items():
-                db = mainnet_db if network == COTI.MAINNET else testnet_db
+                try:
+                    db = mainnet_db if network == COTI.MAINNET else testnet_db
 
-                await rateLimitCheck(URL)
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(URL + '/management/full_network/verbose') as response:
-                        response.raise_for_status()
-                        textResponse = await response.text()
-                        jsonResponse = json.loads(textResponse)
+                    await rateLimitCheck(URL)
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(URL + '/management/full_network/verbose') as response:
+                            response.raise_for_status()
+                            textResponse = await response.text()
+                            jsonResponse = json.loads(textResponse)
+                            jsonResponse = dict(jsonResponse)
 
-                status = jsonResponse['status']
+                    db_nodes = await db.get_nodes()
 
-                db_nodes = await db.get_nodes()
+                    if jsonResponse.get('status') == "Success":
+                        if networkData := jsonResponse.get('networkData'):
+                            if multipleNodeMaps := dict(networkData).get('multipleNodeMaps'):
+                                if FullNodes := dict(multipleNodeMaps).get('FullNode'):
+                                    pass
+                                else: raise Exception(f"Malformed Data Received from {URL} -> {str(jsonResponse)}")
+                            else:
+                                raise Exception(f"Malformed Data Received from {URL} -> {str(jsonResponse)}")
+                        else:
+                            raise Exception(f"Malformed Data Received from {URL} -> {str(jsonResponse)}")
+                        
+                        for nodeHash, nodeData in FullNodes.items():
+                            if re.match(masterNodeRegEx, dict(nodeData).get('webServerUrl')): masterNodes[network].append(dict(nodeData).get('webServerUrl'))
+                        
+                        if TrustScoreNodes := multipleNodeMaps.get('TrustScoreNode'):
+                            #get the url of the first trustscore node
+                            TrustScoreNodeURL = None
+                            try:
+                                for TrustScoreNode in TrustScoreNodes: TrustScoreNodeURL = TrustScoreNodes[TrustScoreNode]['webServerUrl']; break
+                            except Exception as e:
+                                logger.error(f"Error Extracting TrustScore Node URL -> {e}")
+                            TrustScoreNodeURLs[network] = TrustScoreNodeURL
+                        
+                        #check whether our nodes in the database exist on the Node Manager List, if not,
+                        #we update their status.
+                        if db_nodes:
+                            urls = {}
+                            for db_node, db_node_data in db_nodes.items():
+                                if db_node not in FullNodes:
+                                    last_seen = db_node_data['last_seen'] if db_node_data['last_seen'] else 0
+                                    if datetime.timestamp(datetime.now()) <= (float(last_seen) + 3600):#86400):
+                                        urls[db_node] = db_node_data["url"]
+                                    else:
+                                        logger.info(f"{bcolors.OKBLUE}URL [{db_node_data['url']}] last seen longer than a hour ago, ignoring...{bcolors.ENDC}")
+                                        status = 0
+                                        http_code = db_node_data['http_code']
+                                        http_msg = db_node_data['http_msg']
+                                        last_event = db_node_data['last_event'] if status == db_node_data['status'] else time.time()
+                                        latency = db_node_data['latency']
+                                        sync = db_node_data['sync']
+                                        ssl_exp = db_node_data['ssl_exp']
 
-                if status.lower() == "success":
-                    multipleNodeMaps = jsonResponse['networkData']['multipleNodeMaps']
-                    FullNodes = multipleNodeMaps['FullNode']
-                    
-                    for nodeHash, nodeData in FullNodes.items():
-                        if re.match(masterNodeRegEx, nodeData['webServerUrl']): masterNodes[network].append(nodeData['webServerUrl'])
-                    
-                    TrustScoreNodes = multipleNodeMaps['TrustScoreNode']
-                    #get the url of the first trustscore node
-                    TrustScoreNodeURL = None
-                    try:
-                        for TrustScoreNode in TrustScoreNodes: TrustScoreNodeURL = TrustScoreNodes[TrustScoreNode]['webServerUrl']; break
-                    except Exception as e:
-                        logger.error(f"Error Extracting TrustScore Node URL -> {e}")
-                    TrustScoreNodeURLs[network] = TrustScoreNodeURL
-                    
-                    #check whether our nodes in the database exist on the Node Manager List, if not,
-                    #we update their status.
-                    if db_nodes:
-                        urls = {}
-                        for db_node, db_node_data in db_nodes.items():
-                            if db_node not in FullNodes:
-                                last_seen = db_node_data['last_seen'] if db_node_data['last_seen'] else 0
-                                if datetime.timestamp(datetime.now()) <= (float(last_seen) + 3600):#86400):
-                                    urls[db_node] = db_node_data["url"]
-                                else:
-                                    logger.info(f"{bcolors.OKBLUE}URL [{db_node_data['url']}] last seen longer than a hour ago, ignoring...{bcolors.ENDC}")
-                                    status = 0
-                                    http_code = db_node_data['http_code']
-                                    http_msg = db_node_data['http_msg']
-                                    last_event = db_node_data['last_event'] if status == db_node_data['status'] else time.time()
-                                    latency = db_node_data['latency']
-                                    sync = db_node_data['sync']
-                                    ssl_exp = db_node_data['ssl_exp']
+                                        if force_geo:
+                                            try:
+                                                geo_data = await geoData(db_node_data['ip'])
+                                                geo_data = json.dumps(geo_data)
+                                            except Exception as e:
+                                                geo_data = None
+                                        else:
+                                            geo_data = json.dumps(db_node_data['geo'])
 
+                                        name, image = await getNodeDisplayInfo(db_node)
+                                        displayInfo = {
+                                            'name': name,
+                                            'image': image
+                                        }
+
+                                        last_updated = int(time.time())
+                                        await db.update_node(
+                                            db_node, db_node_data["ip"], geo_data, db_node_data["url"], db_node_data["version"],
+                                            json.dumps(db_node_data['feeData']), db_node_data["creationTime"],
+                                            sync, http_code, http_msg, latency, ssl_exp, status, db_node_data['last_seen'], last_event, json.dumps(displayInfo),last_updated
+                                        )
+                                        del last_seen, sync, http_code, ssl_exp, geo_data, displayInfo, db_node, db_node_data
+                            if urls:
+                                async for proccessed_req in checkNodeStatus(urls, network):
+                                    if proccessed_req:
+                                        nodeHash, nodeResult = proccessed_req
+                                        db_node = nodeHash
+                                        db_node_data = db_nodes[db_node]
+                                        status = 0
+                                        last_event = db_node_data['last_event'] if status == db_node_data['status'] else time.time()
+                                        #lastEvent = await getLastEvent(URL, nodeHash)
+                                    else:
+                                        logger.debug(f"No data receveid from checkNodeStatus() = {proccessed_req}")
+                                        break
+                                    #update node status in db
+                                    if nodeResult:
+                                        http_code, http_msg, latency, sync, ssl_exp = nodeResult
+                                    else:
+                                        http_code, http_msg, latency, sync, ssl_exp = (None, 'Skipped: In ignore list', None, SyncStatus.Unkown, None)
+                                    
                                     if force_geo:
                                         try:
                                             geo_data = await geoData(db_node_data['ip'])
@@ -668,203 +719,167 @@ async def cacheNodes():
                                         json.dumps(db_node_data['feeData']), db_node_data["creationTime"],
                                         sync, http_code, http_msg, latency, ssl_exp, status, db_node_data['last_seen'], last_event, json.dumps(displayInfo),last_updated
                                     )
-                                    del last_seen, sync, http_code, ssl_exp, geo_data, displayInfo, db_node, db_node_data
+                                    del sync, http_code, ssl_exp, geo_data, displayInfo, db_node, db_node_data
+                            del urls
+
+                        urls = {}
+                        for nodeHash in FullNodes:
+                            node = dict(FullNodes[nodeHash])
+                            urls[nodeHash] = node.get("webServerUrl")
                         if urls:
                             async for proccessed_req in checkNodeStatus(urls, network):
                                 if proccessed_req:
                                     nodeHash, nodeResult = proccessed_req
-                                    db_node = nodeHash
-                                    db_node_data = db_nodes[db_node]
-                                    status = 0
-                                    last_event = db_node_data['last_event'] if status == db_node_data['status'] else time.time()
+                                    status = 1
+                                    last_event = time.time()
                                     #lastEvent = await getLastEvent(URL, nodeHash)
                                 else:
                                     logger.debug(f"No data receveid from checkNodeStatus() = {proccessed_req}")
                                     break
-                                #update node status in db
+                                node = dict(FullNodes[nodeHash])
+                                last_seen = datetime.timestamp(datetime.now())
+
                                 if nodeResult:
                                     http_code, http_msg, latency, sync, ssl_exp = nodeResult
                                 else:
                                     http_code, http_msg, latency, sync, ssl_exp = (None, 'Skipped: In ignore list', None, SyncStatus.Unkown, None)
-                                
-                                if force_geo:
-                                    try:
-                                        geo_data = await geoData(db_node_data['ip'])
-                                        geo_data = json.dumps(geo_data)
-                                    except Exception as e:
-                                        geo_data = None
-                                else:
-                                    geo_data = json.dumps(db_node_data['geo'])
+                                sync = sync if sync != None else SyncStatus.Unkown
 
-                                name, image = await getNodeDisplayInfo(db_node)
+                                name, image = await getNodeDisplayInfo(nodeHash)
                                 displayInfo = {
                                     'name': name,
                                     'image': image
                                 }
 
-                                last_updated = int(time.time())
-                                await db.update_node(
-                                    db_node, db_node_data["ip"], geo_data, db_node_data["url"], db_node_data["version"],
-                                    json.dumps(db_node_data['feeData']), db_node_data["creationTime"],
-                                    sync, http_code, http_msg, latency, ssl_exp, status, db_node_data['last_seen'], last_event, json.dumps(displayInfo),last_updated
-                                )
-                                del sync, http_code, ssl_exp, geo_data, displayInfo, db_node, db_node_data
-                        del urls
-
-                    urls = {}
-                    for nodeHash in FullNodes:
-                        node = FullNodes[nodeHash]
-                        urls[nodeHash] = node["webServerUrl"]
-                    if urls:
-                        async for proccessed_req in checkNodeStatus(urls, network):
-                            if proccessed_req:
-                                nodeHash, nodeResult = proccessed_req
-                                status = 1
-                                last_event = time.time()
-                                #lastEvent = await getLastEvent(URL, nodeHash)
-                            else:
-                                logger.debug(f"No data receveid from checkNodeStatus() = {proccessed_req}")
-                                break
-                            node = FullNodes[nodeHash]
-                            last_seen = datetime.timestamp(datetime.now())
-
-                            if nodeResult:
-                                http_code, http_msg, latency, sync, ssl_exp = nodeResult
-                            else:
-                                http_code, http_msg, latency, sync, ssl_exp = (None, 'Skipped: In ignore list', None, SyncStatus.Unkown, None)
-                            sync = sync if sync != None else SyncStatus.Unkown
-
-                            name, image = await getNodeDisplayInfo(nodeHash)
-                            displayInfo = {
-                                'name': name,
-                                'image': image
-                            }
-
-                            #check if a nodeHash exists in our database, if not, we add it
-                            if nodeHash not in db_nodes:
-                                try:
-                                    geo_data = await geoData(node['address'])
-                                    geo_data = json.dumps(geo_data)
-                                except:
-                                    geo_data = None
-
-                                trustScore = 0.0
-
-                                last_updated = int(time.time())
-                                await db.add_node(
-                                    nodeHash, node["address"], geo_data, node["webServerUrl"], trustScore, node["version"],
-                                    json.dumps(node["feeData"]), node["nodeRegistrationData"]["creationTime"],
-                                    sync, http_code, http_msg, latency, ssl_exp, status, last_seen, last_event, json.dumps(displayInfo),last_updated
-                                )
-                            else:
-                                #update it
-                                db_node = db_nodes[nodeHash]
-                                last_event = db_node['last_event'] if status == db_node['status'] else time.time()
-                                if db_node['ip'] != node["address"] or force_geo:
+                                #check if a nodeHash exists in our database, if not, we add it
+                                if nodeHash not in db_nodes:
                                     try:
-                                        geo_data = await geoData(node['address'])
+                                        geo_data = await geoData(node.get('address'))
                                         geo_data = json.dumps(geo_data)
                                     except:
                                         geo_data = None
+
+                                    trustScore = 0.0
+
+                                    last_updated = int(time.time())
+                                    await db.add_node(
+                                        nodeHash, node.get("address"), geo_data, node.get("webServerUrl"), trustScore, node.get("version"),
+                                        json.dumps(node.get("feeData")), dict(node.get("nodeRegistrationData")).get("creationTime"),
+                                        sync, http_code, http_msg, latency, ssl_exp, status, last_seen, last_event, json.dumps(displayInfo),last_updated
+                                    )
                                 else:
-                                    geo_data = json.dumps(db_node['geo'])
+                                    #update it
+                                    db_node = db_nodes[nodeHash]
+                                    last_event = db_node['last_event'] if status == db_node['status'] else time.time()
+                                    if db_node['ip'] != node["address"] or force_geo:
+                                        try:
+                                            geo_data = await geoData(node['address'])
+                                            geo_data = json.dumps(geo_data)
+                                        except:
+                                            geo_data = None
+                                    else:
+                                        geo_data = json.dumps(db_node['geo'])
 
-                                sync = sync if sync != None else node["sync"]
+                                    sync = sync if sync != None else node["sync"]
 
-                                last_updated = int(time.time())
-                                await db.update_node(
-                                    nodeHash, node["address"], geo_data, node["webServerUrl"], node["version"],
-                                    json.dumps(node["feeData"]), node["nodeRegistrationData"]["creationTime"],
-                                    sync, http_code, http_msg, latency, ssl_exp, status, last_seen, last_event, json.dumps(displayInfo),last_updated
-                                )
-                else:
-                    pass
+                                    last_updated = int(time.time())
+                                    await db.update_node(
+                                        nodeHash, node.get("address"), geo_data, node.get("webServerUrl"), node.get("version"),
+                                        json.dumps(node.get("feeData")), dict(node.get("nodeRegistrationData")).get("creationTime"),
+                                        sync, http_code, http_msg, latency, ssl_exp, status, last_seen, last_event, json.dumps(displayInfo),last_updated
+                                    )
+                    else:
+                        pass
 
-                logger.info(f"{bcolors.OKCYAN}[{network}] Updating stats...{bcolors.ENDC}")
-                stats = {db_nodeHash: {
-                    'total': None,
-                    365: None,
-                    180: None,
-                    90: None,
-                    30: None,
-                    14: None,
-                    7: None,
-                    1: None
-                } for db_nodeHash in db_nodes}
+                    logger.info(f"{bcolors.OKCYAN}[{network}] Updating stats...{bcolors.ENDC}")
+                    stats = {db_nodeHash: {
+                        'total': None,
+                        365: None,
+                        180: None,
+                        90: None,
+                        30: None,
+                        14: None,
+                        7: None,
+                        1: None
+                    } for db_nodeHash in db_nodes}
 
-                if db_nodes:
-                    days = ['total', 365, 180, 90, 30, 14, 7, 1]
+                    if db_nodes:
+                        days = ['total', 365, 180, 90, 30, 14, 7, 1]
 
-                    async def proccess_stat(session, url, data, day):
-                        try:
-                            async with session.post(url + '/statistics/totalsByPercentageNodes', json = data) as stat_response:
-                                stat_response.raise_for_status()
-                                jsonResponse = await stat_response.json()
-                                if jsonResponse["status"] == "Success":
-                                    nodeHashToActivityPercentage = jsonResponse["nodeHashToActivityPercentage"]
-                                    for nodeHash in nodeHashToActivityPercentage:
-                                        stats[nodeHash][day] = nodeHashToActivityPercentage[nodeHash]["percentage"]
-                                    return True
-                        except (aiohttp.ClientResponseError) as e:
-                            url = e.request_info.url
-                            desc = (f"custom HTTP error -> {e.status} {e.message} ({url})")
-                            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
-                        except (ssl.SSLCertVerificationError) as e:
-                            desc = (f"custom SSL Error -> {e.__cause__} ({URL})")
-                            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
-                        except (aiohttp.ClientError) as e:
-                            url = url
-                            desc = (f"Connection Error -> {e.__cause__} ({url})")
-                            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
-                        except (json.JSONDecodeError) as e:
-                            desc = (f"Custom JSON Error -> {e} ({URL})")
-                            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
-                        except Exception as e:
-                            logger.error(e)
-                        return False
+                        async def proccess_stat(session, url, data, day):
+                            try:
+                                async with session.post(url + '/statistics/totalsByPercentageNodes', json = data) as stat_response:
+                                    stat_response.raise_for_status()
+                                    jsonResponse = await stat_response.json()
+                                    if jsonResponse["status"] == "Success":
+                                        nodeHashToActivityPercentage = jsonResponse["nodeHashToActivityPercentage"]
+                                        for nodeHash in nodeHashToActivityPercentage:
+                                            stats[nodeHash][day] = nodeHashToActivityPercentage[nodeHash]["percentage"]
+                                        return True
+                            except (aiohttp.ClientResponseError) as e:
+                                url = e.request_info.url
+                                desc = (f"custom HTTP error -> {e.status} {e.message} ({url})")
+                                logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                            except (ssl.SSLCertVerificationError) as e:
+                                desc = (f"custom SSL Error -> {e.__cause__} ({URL})")
+                                logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                            except (aiohttp.ClientError) as e:
+                                url = url
+                                desc = (f"Connection Error -> {e.__cause__} ({url})")
+                                logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                            except (json.JSONDecodeError) as e:
+                                desc = (f"Custom JSON Error -> {e} ({URL})")
+                                logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                            except Exception as e:
+                                logger.error(e)
+                            return False
 
-                    async with aiohttp.ClientSession() as session:
-                        stats_tasks = []
-                        
-                        async for i, day in rateLimitFor(URL, days):
-                            data = {
-                                "nodeHashes": [
-                                    db_nodeHash for db_nodeHash in db_nodes
-                                ],
-                                "startDate": "1000-01-01T00:00:00.0000" if day == 'total' else (datetime.now() - timedelta(days=day)).strftime("%Y-%m-%dT%H:%M:%S.%f"),
-                                "endDate": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
-                            }
+                        async with aiohttp.ClientSession() as session:
+                            stats_tasks = []
                             
-                            stats_task = asyncio.ensure_future(proccess_stat(session, URL, data, day))
-                            stats_tasks.append(stats_task)
+                            async for i, day in rateLimitFor(URL, days):
+                                data = {
+                                    "nodeHashes": [
+                                        db_nodeHash for db_nodeHash in db_nodes
+                                    ],
+                                    "startDate": "1000-01-01T00:00:00.0000" if day == 'total' else (datetime.now() - timedelta(days=day)).strftime("%Y-%m-%dT%H:%M:%S.%f"),
+                                    "endDate": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
+                                }
+                                
+                                stats_task = asyncio.ensure_future(proccess_stat(session, URL, data, day))
+                                stats_tasks.append(stats_task)
 
-                        await asyncio.gather(*stats_tasks)
+                            await asyncio.gather(*stats_tasks)
 
-                    for nodeHash in stats:
-                        try:
-                            await db.update_node_stats(nodeHash, json.dumps(stats[nodeHash]))
-                        except Exception as e:
-                            logger.error(f"{bcolors.FAIL}{e}{bcolors.ENDC}",f" on line {e.__traceback__.tb_lineno}")
-                logger.info(f"{bcolors.OKCYAN}[{network}] Stats Updated!{bcolors.ENDC}")
+                        for nodeHash in stats:
+                            try:
+                                await db.update_node_stats(nodeHash, json.dumps(stats[nodeHash]))
+                            except Exception as e:
+                                logger.error(f"{bcolors.FAIL}{e}{bcolors.ENDC}",f" on line {e.__traceback__.tb_lineno}")
+                    logger.info(f"{bcolors.OKCYAN}[{network}] Stats Updated!{bcolors.ENDC}")
+                except (aiohttp.ClientResponseError) as e:
+                    url = e.request_info.url
+                    desc = (f"custom HTTP error -> {e.status} {e.message} ({url})")
+                    logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                except (ssl.SSLCertVerificationError) as e:
+                    desc = (f"custom SSL Error -> {e.__cause__} ({URL})")
+                    logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                except (aiohttp.ClientError) as e:
+                    url = URL
+                    desc = (f"Connection Error -> {e.__cause__} ({url})")
+                    logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                except (json.JSONDecodeError) as e:
+                    desc = (f"Custom JSON Error -> {e} ({URL})")
+                    logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
+                except Exception as e:
+                    exc_type, exc_obj, exc_tb = sys.exc_info()
+                    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                    logger.error(f"{bcolors.FAIL}{(e, exc_type, exc_tb.tb_lineno)}{bcolors.ENDC}")
 
             last_updated = datetime.now(tz=pytz.UTC).strftime("%d-%m-%y, %H:%M")
             logger.info(f"{bcolors.OKGREEN}Last Updated: {last_updated} | Time Elapsed: {(time.time() - start_time)} seconds.{bcolors.ENDC}")
             if run_once: break
 
-        except (aiohttp.ClientResponseError) as e:
-            url = e.request_info.url
-            desc = (f"custom HTTP error -> {e.status} {e.message} ({url})")
-            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
-        except (ssl.SSLCertVerificationError) as e:
-            desc = (f"custom SSL Error -> {e.__cause__} ({URL})")
-            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
-        except (aiohttp.ClientError) as e:
-            url = URL
-            desc = (f"Connection Error -> {e.__cause__} ({url})")
-            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
-        except (json.JSONDecodeError) as e:
-            desc = (f"Custom JSON Error -> {e} ({URL})")
-            logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
