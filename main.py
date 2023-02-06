@@ -30,6 +30,7 @@ rate_limit = 90
 rate_limit_interval = 60
 TrustScoreInterval = 1800
 display_info_interval = 3600
+update_interval = 50
 masterNodeRegEx = r"^(https:\/\/(?:mainnet-fullnode\d*|testnet-fullnode\d*).coti.io)$"
 
 required_settings = [
@@ -54,6 +55,7 @@ settings_keys = {
     "rate_limit_interval": int,
     "TrustScoreInterval": int,
     "display_info_interval": int,
+    "update_interval": int,
     "ignore_list": list,
     "verify_exempt_list": list
 }
@@ -885,7 +887,7 @@ async def cacheNodes():
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             logger.error(f"{bcolors.FAIL}{(e, exc_type, exc_tb.tb_lineno)}{bcolors.ENDC}")
             
-        await asyncio.sleep(30)
+        await asyncio.sleep(update_interval)
         logger.info(f"{bcolors.HEADER}{bcolors.UNDERLINE}Starting over...{bcolors.ENDC}")
 
 async def main():
