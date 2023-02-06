@@ -3,6 +3,7 @@
     "geo_enabled": false,
     "force_geo": false,
     "run_once": false,
+    "connection_timeout": 10,
 
     "db_name": "coti_nodes",
     "db_user": "YOUR_DB_USERNAME",

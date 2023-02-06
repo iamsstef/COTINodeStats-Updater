@@ -22,6 +22,7 @@ from async_dbhelper import DBHelper
 from aiohttp_trace import request_tracer
 
 debug = geo_enabled = force_geo = run_once = False
+connection_timeout = 10
 db_name = db_user = db_pass = db_host = ipinfo_token = ""
 ignore_list = verify_exempt_list = []
 indexGap = 5
@@ -42,6 +43,7 @@ settings_keys = {
     "geo_enabled": bool,
     "force_geo": bool,
     "run_once": bool,
+    "connection_timeout": int,
     "db_name": str,
     "db_user": str,
     "db_pass": str,
@@ -264,7 +266,7 @@ async def getNodeDisplayInfo(nodeHash):
 
 def checkSSL(URL: str):
     try:
-        socket.setdefaulttimeout(5)
+        socket.setdefaulttimeout(connection_timeout)
         domain = urllib.parse.urlparse(URL).netloc
         cert = ssl.get_server_certificate((domain, 443))
         x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
@@ -425,27 +427,35 @@ async def checkNodeStatus(urls, network):
                         else:
                             return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unkown, SSLExpDate)
                     except TypeError as type_err:
-                        logger.error(f'TypeError occurred: {type_err}')
+                        logger.error(f'({url}) TypeError occurred: {type_err}')
                         return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unsync, SSLExpDate)
                     except KeyError as key_err:
-                        logger.error(f'KeyError occurred: {key_err}')
+                        logger.error(f'({url}) KeyError occurred: {key_err}')
                         return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unsync, SSLExpDate)
                     except json.JSONDecodeError as json_err:
-                        logger.error(f'Invalid JSON data error occurred: {json_err}')
+                        logger.error(f'({url}) Invalid JSON data error occurred: {json_err}')
                         return nodeHash, (httpCode, "Malformed Json Data Received", latency, SyncStatus.Unsync, SSLExpDate)
             except (aiohttp.ClientResponseError) as e: #HTTPError
-                logger.warning(f'HTTP error occurred: {e}')
+                logger.warning(f'({url}) HTTP error occurred: {e}')
                 return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unkown, SSLExpDate)
             except ssl.SSLCertVerificationError as e: #SSLError
-                logger.warning(f'SSL Verification Error occurred: {e}')
+                logger.warning(f'({url}) SSL Verification Error occurred: {e}')
                 desc = e.__cause__
                 return nodeHash, (None, f"{desc}", latency, SyncStatus.Unkown, SSLExpDate)
             except (aiohttp.ClientError) as e: #GENERIC aiohttp Exception
-                logger.warning(f'An error occurred: {e}')
+                logger.warning(f'({url}) An error occurred: {e}')
                 desc = e.__cause__
-                return nodeHash, (None, f"{desc}", latency, SyncStatus.Unkown, SSLExpDate)
+                return nodeHash, (None, f"{desc}", None, SyncStatus.Unkown, SSLExpDate)
+            except (asyncio.TimeoutError) as e:
+                logger.warning(f'({url}) An error occurred: {bcolors.FAIL}Timeout Error{bcolors.ENDC}')
+                desc = "Connection Timeout"
+                return nodeHash, (None, f"{desc}", None, SyncStatus.Unkown, SSLExpDate)
+            except Exception as e:
+                logger.warning(f'({url}) An error occurred: {e.__traceback__.tb_frame}, in Line {e.__traceback__.tb_lineno}')
+                desc = e.__cause__
+                return None
 
-        async with aiohttp.ClientSession(trace_configs=[request_tracer(trace)]) as session:
+        async with aiohttp.ClientSession(trace_configs=[request_tracer(trace)], timeout=aiohttp.ClientTimeout(total=connection_timeout)) as session:
             tasks = []
             for syncCheckNode in syncCheckNodes:
                 url = syncCheckNode['url'] + "/transaction/index"
@@ -459,7 +469,8 @@ async def checkNodeStatus(urls, network):
                 del data, task
             
             async for proccesed_req in as_completed_async(tasks): #async
-                yield await proccesed_req
+                if proccesed_req:
+                    yield await proccesed_req
             #del trace
 
     except Exception as e:
@@ -610,7 +621,11 @@ async def cacheNodes():
                     
                     TrustScoreNodes = multipleNodeMaps['TrustScoreNode']
                     #get the url of the first trustscore node
-                    for TrustScoreNode in TrustScoreNodes: TrustScoreNodeURL = TrustScoreNodes[TrustScoreNode]['webServerUrl']; break
+                    TrustScoreNodeURL = None
+                    try:
+                        for TrustScoreNode in TrustScoreNodes: TrustScoreNodeURL = TrustScoreNodes[TrustScoreNode]['webServerUrl']; break
+                    except Exception as e:
+                        logger.error(f"Error Extracting TrustScore Node URL -> {e}")
                     TrustScoreNodeURLs[network] = TrustScoreNodeURL
                     
                     #check whether our nodes in the database exist on the Node Manager List, if not,
@@ -798,7 +813,7 @@ async def cacheNodes():
                             desc = (f"custom SSL Error -> {e.__cause__} ({URL})")
                             logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
                         except (aiohttp.ClientError) as e:
-                            url = e.request_info.url
+                            url = url
                             desc = (f"Connection Error -> {e.__cause__} ({url})")
                             logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
                         except (json.JSONDecodeError) as e:
@@ -844,7 +859,7 @@ async def cacheNodes():
             desc = (f"custom SSL Error -> {e.__cause__} ({URL})")
             logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
         except (aiohttp.ClientError) as e:
-            url = e.request_info.url
+            url = URL
             desc = (f"Connection Error -> {e.__cause__} ({url})")
             logger.error(f"{bcolors.FAIL}{desc}{bcolors.ENDC}")
         except (json.JSONDecodeError) as e:
