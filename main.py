@@ -414,7 +414,7 @@ async def checkNodeStatus(urls, network):
                     if masterNodeStatus not in http_ok_codes:
                         return nodeHash, (httpCode, http_msg, latency, SyncStatus.Unchanged, SSLExpDate)
                     try:
-                        if httpCode not in http_ok_codes:
+                        if httpCode in http_ok_codes:
                             node_json_response = await node_response.json()
                             node_json_response = dict(node_json_response)
                             
